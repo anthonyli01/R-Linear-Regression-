@@ -1,0 +1,512 @@
+---
+output:
+  pdf_document: default
+  html_document: default
+---
+
+-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+          ST300 Project
+-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+
+____________________________________________________________________________________________________________________________________________________________________
+Packages and Loading Data (14 Variables - 2 Categorical and 11 Independent Continuous and 1 Dependent Continuous)
+____________________________________________________________________________________________________________________________________________________________________
+
+```{r}
+# We are first going into add all the packages we need to the library
+library(ggplot2)
+library(leaps)
+library(dplyr)
+library(ISLR)
+library(car)
+library(huxtable)
+library(lmtest)
+
+# Reading our data set
+car_dat <-read.csv("CarPrice_Assignment.csv",head=T) 
+
+```
+
+____________________________________________________________________________________________________________________________________________________________________
+Here I am fixing the data set by creating indicator functions for the categorical levels
+____________________________________________________________________________________________________________________________________________________________________
+
+Candidate 26617
+```{r}
+# Creating test model to see which variables gets absorbed into the intercept. 
+test_model <- lm(price~., data=car_dat)
+summary(test_model)
+
+# We can see that drivewheel-4wd and carbody-convertible are the ones missing 
+#implying this gets absorbed into the intercept
+
+# We now create indicator functions for all the levels of carbody and drivewheel
+n = c(1:205)
+
+levels <- matrix(0, nrow = 205, ncol = 6)
+levels_names <- c('hardtop', 'hatchback', 'sedan', 'wagon', 'fwd', 'rwd')
+
+# The following for loops will create indicator functions for each level and 
+#assign it to the respective columns in the 'levels' matrix
+for (j in (1:4))  {
+for (i in n) {
+
+  if (car_dat[i,1] == levels_names[j]) {
+  levels[i,j] = 1
+  }
+}
+}
+
+for (j in (5:6))  {
+for (i in n) {
+
+  if (car_dat[i,2] == levels_names[j]) {
+  levels[i,j] = 1
+  }
+}
+}
+
+# Now adding the new columns for each level to the main data set
+new_car_dat = data.frame(levels, car_dat[,-c(1,2)])
+colnames(new_car_dat)[1:6] <- levels_names
+
+
+# The following code is to test whether the coefficients has changed after 
+#changing the data set by making indicator functions for each level. 
+#We can see that the coefficients have not changed therefore we have successfully 
+#created the indicator functions
+
+test_model2 <- lm(price~., data = new_car_dat)
+
+huxreg("Model"=test_model, "Model after creating Indicator functions"=test_model2,
+       statistics = c("N.obs"="nobs","R Squared"="r.squared","F Statistic"="statistic"
+                      ,"P Value"="p.value"))
+
+```
+____________________________________________________________________________________________________________________________________________________________________
+Plotting price against continuous variables
+____________________________________________________________________________________________________________________________________________________________________
+
+```{r}
+# Storing all variable names into a list
+variable_names = c('Wheel Base','Car Length','Car Width','Car Height',
+                   'Curb Weight','Engine Size','Bore Ratio','Stroke',
+                   'Compression','Horsepower','Highway MPG')
+
+k = c(7:17)
+
+# Creating a loop to plot graphs of price against each variable
+for (i in k) {
+  graph <- ggplot(new_car_dat,aes(x=new_car_dat[,i],y=price))+
+  geom_point()+
+  theme_bw()+
+  xlab(variable_names[i-6])
+  plot(graph)
+}
+
+```
+____________________________________________________________________________________________________________________________________________________________________
+Calculating correlations between price and each continuous variable
+____________________________________________________________________________________________________________________________________________________________________
+
+```{r}
+Before_Trans = c(0)
+After_Trans = c(0)
+
+# Pre-allocating matrix to store correlations between continuous variables and price
+correlations <- data.frame(variable_names, Before_Trans, After_Trans)
+
+# Creating a for loop to calculate correlations then storing it in the data frame
+for (i in k) {
+  corr <- cor(new_car_dat$price, new_car_dat[,i])
+  correlations[i-6,2] <- corr
+}
+
+```
+____________________________________________________________________________________________________________________________________________________________________
+Now we check the QQ Plots of the standard residuals of all the continuous variables individually against standard normal
+____________________________________________________________________________________________________________________________________________________________________
+
+```{r}
+# Creating for loop to create QQ plot for the standard residuals against standard normal
+for (i in k) {
+  model <- lm(price ~ new_car_dat[,i], data = new_car_dat)
+  
+  qqplot.1 <- ggplot(model)+
+  stat_qq(aes(sample = .stdresid))+
+  geom_abline()+
+  xlab('Standard Normal')+
+  ylab(variable_names[i-6])
+  
+  
+  plot(qqplot.1)
+}
+
+```
+____________________________________________________________________________________________________________________________________________________________________
+Transformations to our variables to ensure the residuals are more normally distributed (to 2 decimal places)
+____________________________________________________________________________________________________________________________________________________________________
+
+Candidate 25983 & 40088
+```{r}
+# Duplicating our dataset to store the transformed data
+car_dat_trans <- new_car_dat
+
+# Applying transformations to variables in attempt to make residuals normally distributed
+car_dat_trans$price <-log((car_dat$price))
+car_dat_trans$curbweight <-(car_dat$curbweight)^1/2
+car_dat_trans$enginesize <-(car_dat$enginesize)^1
+car_dat_trans$boreratio <-(car_dat$boreratio)^1
+car_dat_trans$stroke <-(car_dat$stroke)^2
+car_dat_trans$compressionratio <-exp((car_dat$compressionratio))
+car_dat_trans$horsepower <-(car_dat$horsepower)^1/2
+
+```
+____________________________________________________________________________________________________________________________________________________________________
+Creating QQ plots for the residuals of the transformed variables
+____________________________________________________________________________________________________________________________________________________________________
+
+```{r}
+for (i in k) {
+  model_trans <- lm(price ~ car_dat_trans[,i], data = car_dat_trans)
+  
+  qqplot.1 <- ggplot(model_trans)+
+  stat_qq(aes(sample = .stdresid))+
+  geom_abline()+
+  xlab('Standard Normal')+
+  ylab(variable_names[i-6])
+  
+  plot(qqplot.1)
+}
+```
+____________________________________________________________________________________________________________________________________________________________________
+Now we calculate the correlation between all the transformed continuous variables and price
+____________________________________________________________________________________________________________________________________________________________________
+
+```{r}
+# Creating for loop to calculate the correlations between price and the transformed variables
+for (i in k) {
+  corr <- cor(car_dat$price, car_dat_trans[,i])
+  correlations[i-6,3] <- corr
+}
+
+correlations
+
+```
+
+
+-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+  Variable Selection Model 1: AIC
+-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+
+Candidate 25983
+____________________________________________________________________________________________________________________________________________________________________
+Carrying out forward AIC to select variables to include in linear model
+____________________________________________________________________________________________________________________________________________________________________
+
+```{r}
+# Creating null and full linear models
+null <-lm(price~1, data=car_dat_trans)
+full <-lm(price~., data=car_dat_trans)
+
+# Carrying out forward AIC to select variables
+AIC <-step(null, scope=list(lower=null, upper=full),direction = "forward")
+summary(AIC)
+
+```
+____________________________________________________________________________________________________________________________________________________________________
+AIC Model suggests including curb weight, horsepower, hatchback, wagon, rwd, carwidth, sedan, hardtop, compressionratio, carheight and highwaympg in the linear model.
+____________________________________________________________________________________________________________________________________________________________________
+
+```{r}
+# Extracting the data on the variables selected by AIC
+car_dat_AIC <- subset(car_dat_trans, select = c(price,curbweight,horsepower,
+                                                hatchback,wagon,rwd,carwidth,
+                                                sedan,hardtop,compressionratio,
+                                                carheight,highwaympg))
+
+# Checking for Multicollinearity using VIF
+model_AIC <- lm(price ~ ., data = car_dat_AIC)
+data.frame(vif(model_AIC))
+
+# Curb Weight and sedan has GVIF > 10 hence should be removed
+car_dat_AIC2 <- subset(car_dat_AIC, select = -c(curbweight, sedan))
+model_AIC2 <- lm(price ~ ., data = car_dat_AIC2)
+
+```
+____________________________________________________________________________________________________________________________________________________________________
+Using Cook's Distance to remove influential points from the data
+____________________________________________________________________________________________________________________________________________________________________
+```{r}
+# Carrying out Cook's Distance for the initial case
+threshold_1 <- 4/(nrow(car_dat_AIC2)-10)
+plot(model_AIC2, which = 4)     # This line plots the cook's distance for the linear model
+abline(h = threshold_1, col="blue")
+
+max_1 = max(cooks.distance(model_AIC2))
+
+# To make sure we don't remove too many rows, we set a limit on the number of 
+#iterations we carry out Cook's Distance
+limit = 30
+count = 0
+
+# Creating a while loop to iterate until no more reach the threshold
+while (max_1 > threshold_1) {
+  
+  if (count == limit) {
+    break
+  }
+  
+  max_index_1 = which.max(cooks.distance(model_AIC2))
+  
+  car_dat_AIC2 <- car_dat_AIC2[-c(max_index_1),]
+  count = count + 1
+  threshold <- 4/(nrow(car_dat_AIC2)-10)
+  
+  model_AIC2 <- lm(price ~ ., data = car_dat_AIC2)
+
+  max_1 = max(cooks.distance(model_AIC2))
+}
+
+  plot(model_AIC2, which = 4)
+  abline(h = threshold_1, col="blue")
+```
+____________________________________________________________________________________________________________________________________________________________________
+Summary of Final AIC Model and Model Assumptions
+____________________________________________________________________________________________________________________________________________________________________
+
+```{r}
+summary(model_AIC2)
+coef(model_AIC2)
+
+# Residuals have mean zero
+mean(model_AIC2$residuals)
+
+# Creating qq plot for the standard residuals of the final AIC model against 
+#the standard normal
+qqplot.1 <- ggplot(model_AIC2)+
+stat_qq(aes(sample = .stdresid))+
+geom_abline()
+
+plot(qqplot.1)
+
+# Carrying out bp test for heteroscedasticity
+bptest(model_AIC2)
+
+# Plotting the residuals against the fitted values to see how the residuals 
+#change as the fitted values get larger
+plot(model_AIC2$fitted.values, model_AIC2$residuals,ylab = "residuals",xlab = 
+       "fitted values")
+abline(h=0, col = "red")
+
+```
+
+
+____________________________________________________________________________________________________________________________________________________________________
+Since p-value > 0.05, we do not have sufficient evidence to reject the null hypothesis. Therefore it is unlikely that we have heteroschedasticity
+____________________________________________________________________________________________________________________________________________________________________
+
+
+-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+  Variable Selection Model 2: BIC
+-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+
+
+____________________________________________________________________________________________________________________________________________________________________
+Carrying out BIC to select variables to include in linear model
+____________________________________________________________________________________________________________________________________________________________________
+
+Candidate 40088
+```{r}
+BIC <- regsubsets(price~.,nvmax=18, data=car_dat_trans)
+plot(BIC, scale="bic")
+
+```
+____________________________________________________________________________________________________________________________________________________________________
+The BIC variable selection suggests we use hatchback, sedan, wagon, rwd, Car Width, Curb Weight, and Horsepower
+____________________________________________________________________________________________________________________________________________________________________
+
+```{r}
+car_dat_BIC <- subset(car_dat_trans, select = c(price, hatchback, sedan, wagon, 
+                                                rwd, carwidth, curbweight,
+                                                horsepower))
+
+# Forming linear model with the BIC selected variables
+model_BIC <-lm(price~., data=car_dat_BIC)
+
+# Checking for multicollinearity
+data.frame(vif(model_BIC),1)
+summary(model_BIC)
+```
+____________________________________________________________________________________________________________________________________________________________________
+The vif is less than 10 for all variables and the p-value for each predictor is less than 5%. This suggests that most likely do NOT have multicollinearity in this model.
+
+We now carry out Cook's Distance analysis
+____________________________________________________________________________________________________________________________________________________________________
+
+```{r}
+# Repeating the same process as we did earlier for AIC
+
+threshold_2 <-4/(nrow(car_dat_BIC)-3)
+plot(model_BIC, which = 4)
+abline(h=threshold_2, col="blue")
+
+max_2 = max(cooks.distance(model_BIC))
+
+while (max_2 > threshold_2) {
+  
+  max_index_2 = which.max(cooks.distance(model_BIC))
+  car_dat_BIC <- car_dat_BIC[-c(max_index_2),]
+  
+  threshold_2 <- 4/(nrow(car_dat_BIC)-3)
+  
+  model_BIC <-lm(price~., data=car_dat_BIC)
+
+  
+  max_2 = max(cooks.distance(model_BIC))
+  
+}  
+
+plot(model_BIC, which=4)
+abline(h=threshold_2, col="blue")
+```
+____________________________________________________________________________________________________________________________________________________________________
+Summary of Final BIC Model and Model Assumptions
+____________________________________________________________________________________________________________________________________________________________________
+```{r}
+summary(model_BIC)
+
+#Residuals have mean zero
+mean(model_BIC$residuals)
+
+
+# Creating QQ-plot for standardised residuals against standard normal
+qqplot.2 <- ggplot(model_BIC)+
+stat_qq(aes(sample = .stdresid))+
+geom_abline()
+
+plot(qqplot.2)
+
+# Carrying out BP test for hetereoscedasticity
+
+bptest(model_BIC)
+
+plot(model_BIC$fitted.values, model_BIC$residuals,ylab = "residuals",xlab=
+       "fitted values")
+abline(h=0, col = "red")
+
+```
+____________________________________________________________________________________________________________________________________________________________________
+Since the p-value > 5%, we do NOT have sufficient evidence to reject H0. Therefore it is unlikely we have heteroschedisticity
+____________________________________________________________________________________________________________________________________________________________________
+
+
+-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+  Variable Selection Model 3: ADJR
+-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+
+
+____________________________________________________________________________________________________________________________________________________________________
+Using adjusted R-squared to select variables for linear model
+____________________________________________________________________________________________________________________________________________________________________
+
+Candidate 26617
+```{r}
+ADJR <- regsubsets(price~.,nvmax=18, data=car_dat_trans)
+plot(ADJR, scale="adjr2")
+
+```
+____________________________________________________________________________________________________________________________________________________________________
+The ADJR model suggests that we include hardtop, hatchback, sedan, wagon, rwd, carwidth, carheight, curbweight, boreratio, compressionratio, horsepower, highwaympg
+____________________________________________________________________________________________________________________________________________________________________
+
+```{r}
+car_dat_ADJR <- subset(car_dat_trans, select = c(price, hardtop, hatchback, 
+                                                 sedan, wagon, rwd, carwidth, 
+                                                 carheight, curbweight, boreratio, 
+                                                 compressionratio, horsepower, 
+                                                 highwaympg))
+
+
+# Forming linear model after dropping the insignificant predictors
+model_ADJR <-lm(price~., data = car_dat_ADJR)
+
+# Checking for multicollinearity
+data.frame(vif(model_ADJR),1)
+summary(model_ADJR)
+
+```
+____________________________________________________________________________________________________________________________________________________________________
+The vif for sedan and curbweight is greater than 10, hence, we remove these from the model.
+____________________________________________________________________________________________________________________________________________________________________
+
+```{r}
+car_dat_ADJR2 <- subset(car_dat_ADJR, select = -c(sedan, curbweight))
+model_ADJR2 <- lm(price ~ ., data = car_dat_ADJR2)
+
+# Recreating the ADJR model with the dependent predictors removed
+model_ADJR2 <-lm(price~., data = car_dat_ADJR2)
+
+huxreg("Model"=model_ADJR, "Model after removing dependent predictors"=model_ADJR2,
+       statistics = c("N.obs"="nobs","R Squared"="r.squared","F Statistic"="statistic",
+                      "P Value"="p.value"))
+
+```
+____________________________________________________________________________________________________________________________________________________________________
+So the R-Squared slightly decreases but we obtain a larger F statistic which suggests that our overall model more significant.
+Carrying out Cook's Distance to remove influential points
+____________________________________________________________________________________________________________________________________________________________________
+
+```{r}
+# Again, code is same as previously done for AIC and BIC
+
+threshold_3 <-4/(nrow(car_dat_ADJR2)-7)
+plot(model_ADJR2,which=4)
+abline(h=threshold_3, col="blue")
+
+max_3 = max(cooks.distance(model_ADJR2))
+
+while (max_3 > threshold_3) {
+  
+  max_index_3 = which.max(cooks.distance(model_ADJR2))
+  car_dat_ADJR2 <- car_dat_ADJR2[-c(max_index_3),]
+  
+  threshold_3 <- 4/(nrow(car_dat_ADJR2)-3)
+  
+  model_ADJR2 <- lm(price~., data=car_dat_ADJR2)
+  
+  max_3 = max(cooks.distance(model_ADJR2))
+  
+}
+
+plot(model_ADJR2, which=4)
+abline(h=threshold_3, col="blue")
+```
+____________________________________________________________________________________________________________________________________________________________________
+Summary of Final Adjusted R-Squared Model and Model Assumptions
+____________________________________________________________________________________________________________________________________________________________________
+
+```{r}
+summary(model_ADJR2)
+coef(model_ADJR2)
+
+# Residuals have mean zero
+mean(model_ADJR2$residuals)
+
+# Creating QQ-plot for standardised residuals of the final ADJR model against standard normal
+qqplot.3 <- ggplot(model_ADJR2)+
+stat_qq(aes(sample = .stdresid))+
+geom_abline()
+
+plot(qqplot.3)
+
+bptest(model_ADJR2)
+
+plot(model_ADJR2$fitted.values, model_ADJR2$residuals,ylab = "residuals",xlab=
+       "fitted values")
+abline(h=0, col = "red")
+
+```
+____________________________________________________________________________________________________________________________________________________________________
+Since p-value > 5%, we do not have sufficient evidence to reject H0, Therefore it is likely we do not have heteroschedasticity.
+____________________________________________________________________________________________________________________________________________________________________
